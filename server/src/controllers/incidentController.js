@@ -9,6 +9,10 @@ const {
   VALID_STATUSES,
   VALID_SEVERITIES
 } = require("../models/incident");
+const {
+  notifyIncidentCreated,
+  notifyIncidentUpdated
+} = require("../services/automationService");
 
 async function createIncidentHandler(req, res) {
   try {
@@ -37,6 +41,13 @@ async function createIncidentHandler(req, res) {
     const db = getDatabase();
 
     const result = await db.collection("incidents").insertOne(incident);
+
+    const persisted = {
+      ...incident,
+      _id: result.insertedId
+    };
+
+    notifyIncidentCreated(persisted);
 
     res.status(201).json({
       id: result.insertedId,
@@ -140,12 +151,15 @@ async function updateIncidentHandler(req, res) {
       });
     }
 
+    const previous = { ...existing };
     const updated = updateIncident(existing, updates);
 
     await db.collection("incidents").replaceOne(
       { _id: new ObjectId(id) },
       updated
     );
+
+    notifyIncidentUpdated(updated, previous);
 
     res.json(updated);
   } catch (error) {
