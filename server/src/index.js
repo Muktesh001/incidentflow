@@ -1,3 +1,6 @@
+const incidentRoutes = require("./routes/incidentRoutes");
+
+
 const express = require("express");
 const { connectDatabase } = require("./config/database");
 
@@ -6,6 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(express.json());
+app.use("/api/incidents", incidentRoutes);
 
 app.get("/health", (req, res) => {
   res.json({
