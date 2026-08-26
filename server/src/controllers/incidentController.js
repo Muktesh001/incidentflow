@@ -14,6 +14,137 @@ const {
   notifyIncidentUpdated
 } = require("../services/automationService");
 
+function splitCsv(value) {
+  if (value === undefined || value === null || value === "") {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((v) => String(v).split(","))
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  return String(value)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function parseFilterQuery(req) {
+  const { status, severity, service, search, from, to, limit, offset } = req.query;
+
+  const statusList = splitCsv(status);
+  const severityList = splitCsv(severity);
+
+  for (const s of statusList) {
+    if (!isValidStatus(s)) {
+      throw {
+        type: "validation",
+        field: "status",
+        value: s,
+        message: "Invalid status: " + s,
+        allowed: VALID_STATUSES
+      };
+    }
+  }
+
+  for (const s of severityList) {
+    if (!isValidSeverity(s)) {
+      throw {
+        type: "validation",
+        field: "severity",
+        value: s,
+        message: "Invalid severity: " + s,
+        allowed: VALID_SEVERITIES
+      };
+    }
+  }
+
+  const query = {};
+
+  if (statusList.length > 0) {
+    query.status = { $in: statusList };
+  }
+
+  if (severityList.length > 0) {
+    query.severity = { $in: severityList };
+  }
+
+  if (service !== undefined && service !== "") {
+    query.service = String(service);
+  }
+
+  if (search !== undefined && search !== "") {
+    const escaped = String(search).replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+    query.$or = [
+      { title: { $regex: escaped, $options: "i" } },
+      { description: { $regex: escaped, $options: "i" } }
+    ];
+  }
+
+  if (from !== undefined || to !== undefined) {
+    query.createdAt = {};
+    if (from !== undefined) {
+      const d = new Date(from);
+      if (!Number.isNaN(d.getTime())) {
+        query.createdAt.$gte = d;
+      } else {
+        throw {
+          type: "validation",
+          field: "from",
+          value: from,
+          message: "Invalid from date: " + from
+        };
+      }
+    }
+    if (to !== undefined) {
+      const d = new Date(to);
+      if (!Number.isNaN(d.getTime())) {
+        query.createdAt.$lte = d;
+      } else {
+        throw {
+          type: "validation",
+          field: "to",
+          value: to,
+          message: "Invalid to date: " + to
+        };
+      }
+    }
+    if (Object.keys(query.createdAt).length === 0) {
+      delete query.createdAt;
+    }
+  }
+
+  let parsedLimit;
+  let parsedOffset;
+  if (limit !== undefined) {
+    parsedLimit = parseInt(limit, 10);
+    if (Number.isNaN(parsedLimit) || parsedLimit < 0) {
+      throw {
+        type: "validation",
+        field: "limit",
+        value: limit,
+        message: "Invalid limit: " + limit
+      };
+    }
+  }
+  if (offset !== undefined) {
+    parsedOffset = parseInt(offset, 10);
+    if (Number.isNaN(parsedOffset) || parsedOffset < 0) {
+      throw {
+        type: "validation",
+        field: "offset",
+        value: offset,
+        message: "Invalid offset: " + offset
+      };
+    }
+  }
+
+  return { query, limit: parsedLimit, offset: parsedOffset };
+}
+
 async function createIncidentHandler(req, res) {
   try {
     const { title, description, service, severity } = req.body;
@@ -64,20 +195,122 @@ async function createIncidentHandler(req, res) {
 
 async function getIncidentsHandler(req, res) {
   try {
+    const { query, limit, offset } = parseFilterQuery(req);
+
     const db = getDatabase();
 
-    const incidents = await db
+    let cursor = db
       .collection("incidents")
-      .find()
-      .sort({ createdAt: -1 })
-      .toArray();
+      .find(query)
+      .sort({ createdAt: -1 });
+
+    if (offset !== undefined) {
+      cursor = cursor.skip(offset);
+    }
+    if (limit !== undefined) {
+      cursor = cursor.limit(limit);
+    }
+
+    const incidents = await cursor.toArray();
 
     res.json(incidents);
   } catch (error) {
+    if (error && error.type === "validation") {
+      return res.status(400).json({
+        error: error.message,
+        field: error.field,
+        value: error.value,
+        allowedValues: error.allowed
+      });
+    }
+
     console.error("Get incidents error:", error);
 
     res.status(500).json({
       error: "Failed to fetch incidents"
+    });
+  }
+}
+
+async function getIncidentStatsHandler(req, res) {
+  try {
+    const db = getDatabase();
+
+    const pipeline = [
+      {
+        $facet: {
+          total: [{ $count: "value" }],
+          byStatus: [
+            { $group: { _id: "$status", count: { $sum: 1 } } }
+          ],
+          bySeverity: [
+            { $group: { _id: "$severity", count: { $sum: 1 } } }
+          ],
+          byService: [
+            { $group: { _id: "$service", count: { $sum: 1 } } }
+          ],
+          openCritical: [
+            { $match: { status: "open", severity: "critical" } },
+            { $count: "value" }
+          ],
+          openHigh: [
+            { $match: { status: "open", severity: "high" } },
+            { $count: "value" }
+          ]
+        }
+      }
+    ];
+
+    const aggResult = await db
+      .collection("incidents")
+      .aggregate(pipeline)
+      .toArray();
+
+    const result = aggResult[0] || {};
+
+    const emptyStatusBucket = Object.fromEntries(
+      VALID_STATUSES.map((s) => [s, 0])
+    );
+    const emptySeverityBucket = Object.fromEntries(
+      VALID_SEVERITIES.map((s) => [s, 0])
+    );
+    const byStatus = { ...emptyStatusBucket };
+    const bySeverity = { ...emptySeverityBucket };
+    const byService = {};
+
+    for (const row of result.byStatus || []) {
+      byStatus[row._id] = row.count;
+    }
+    for (const row of result.bySeverity || []) {
+      bySeverity[row._id] = row.count;
+    }
+    for (const row of result.byService || []) {
+      byService[row._id] = row.count;
+    }
+
+    const total =
+      (result.total && result.total[0] && result.total[0].value) || 0;
+    const openCritical =
+      (result.openCritical &&
+        result.openCritical[0] &&
+        result.openCritical[0].value) ||
+      0;
+    const openHigh =
+      (result.openHigh && result.openHigh[0] && result.openHigh[0].value) || 0;
+
+    res.json({
+      total,
+      byStatus,
+      bySeverity,
+      byService,
+      openCritical,
+      openHigh
+    });
+  } catch (error) {
+    console.error("Get incident stats error:", error);
+
+    res.status(500).json({
+      error: "Failed to fetch incident statistics"
     });
   }
 }
@@ -209,6 +442,7 @@ async function deleteIncidentHandler(req, res) {
 module.exports = {
   createIncidentHandler,
   getIncidentsHandler,
+  getIncidentStatsHandler,
   getIncidentHandler,
   updateIncidentHandler,
   deleteIncidentHandler
