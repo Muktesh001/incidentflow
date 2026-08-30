@@ -13,6 +13,31 @@ const {
   notifyIncidentCreated,
   notifyIncidentUpdated
 } = require("../services/automationService");
+const {
+  recordIncidentCreatedAsync,
+  recordIncidentUpdatedAsync,
+  getIncidentHistory
+} = require("../services/incidentHistoryService");
+
+const COMPARABLE_FIELDS = ["title", "description", "service", "severity", "status"];
+
+function buildChanges(previous, current) {
+  const changes = {};
+
+  for (const field of COMPARABLE_FIELDS) {
+    const prev = previous ? previous[field] : undefined;
+    const curr = current ? current[field] : undefined;
+
+    if (prev !== curr) {
+      changes[field] = {
+        from: prev !== undefined ? prev : null,
+        to: curr !== undefined ? curr : null
+      };
+    }
+  }
+
+  return changes;
+}
 
 function splitCsv(value) {
   if (value === undefined || value === null || value === "") {
@@ -179,6 +204,7 @@ async function createIncidentHandler(req, res) {
     };
 
     notifyIncidentCreated(persisted);
+    recordIncidentCreatedAsync(persisted);
 
     res.status(201).json({
       id: result.insertedId,
@@ -394,12 +420,73 @@ async function updateIncidentHandler(req, res) {
 
     notifyIncidentUpdated(updated, previous);
 
+    const changes = buildChanges(previous, updated);
+    recordIncidentUpdatedAsync(updated, previous, changes);
+
     res.json(updated);
   } catch (error) {
     console.error("Update incident error:", error);
 
     res.status(500).json({
       error: "Failed to update incident"
+    });
+  }
+}
+
+async function getIncidentHistoryHandler(req, res) {
+  try {
+    const { id } = req.params;
+
+    if (!isValidIncidentId(id)) {
+      return res.status(400).json({
+        error: "Invalid incident ID"
+      });
+    }
+
+    const db = getDatabase();
+    const incident = await db.collection("incidents").findOne({
+      _id: new ObjectId(id)
+    });
+
+    if (!incident) {
+      return res.status(404).json({
+        error: "Incident not found"
+      });
+    }
+
+    const { limit, offset } = req.query;
+    const options = {};
+    if (limit !== undefined) {
+      const parsedLimit = parseInt(limit, 10);
+      if (Number.isNaN(parsedLimit) || parsedLimit < 0) {
+        return res.status(400).json({
+          error: "Invalid limit: " + limit,
+          field: "limit",
+          value: limit
+        });
+      }
+      options.limit = parsedLimit;
+    }
+    if (offset !== undefined) {
+      const parsedOffset = parseInt(offset, 10);
+      if (Number.isNaN(parsedOffset) || parsedOffset < 0) {
+        return res.status(400).json({
+          error: "Invalid offset: " + offset,
+          field: "offset",
+          value: offset
+        });
+      }
+      options.offset = parsedOffset;
+    }
+
+    const history = await getIncidentHistory(id, options);
+
+    res.json(history);
+  } catch (error) {
+    console.error("Get incident history error:", error);
+
+    res.status(500).json({
+      error: "Failed to fetch incident history"
     });
   }
 }
@@ -444,6 +531,7 @@ module.exports = {
   getIncidentsHandler,
   getIncidentStatsHandler,
   getIncidentHandler,
+  getIncidentHistoryHandler,
   updateIncidentHandler,
   deleteIncidentHandler
 };

@@ -1,6 +1,9 @@
 const WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
 const COMPARABLE_FIELDS = ["title", "description", "service", "severity", "status"];
 const SIGNIFICANT_FIELDS = ["severity", "status"];
+const {
+  recordAutomationEventAsync
+} = require("./incidentHistoryService");
 
 function serializeId(incident) {
   if (!incident) return null;
@@ -90,8 +93,24 @@ function notifyIncidentCreated(incident) {
     incident: serializeId(incident)
   };
 
+  const incidentId = incident && (incident.id || incident._id);
+
   Promise.resolve()
     .then(() => emitEvent("incident.created", payload))
+    .then((result) => {
+      if (incidentId) {
+        const details = {
+          summary: result && result.ok
+            ? "Webhook incident.created delivered to n8n"
+            : result
+              ? "Webhook incident.created failed to deliver"
+              : "Webhook incident.created skipped (no N8N_WEBHOOK_URL)",
+          delivery: result || { skipped: true, reason: "no_webhook_url" }
+        };
+        recordAutomationEventAsync(incidentId, "incident.created", details);
+      }
+      return result;
+    })
     .catch((err) =>
       console.warn(`[automation] notifyIncidentCreated error: ${err.message}`)
     );
@@ -111,8 +130,26 @@ function notifyIncidentUpdated(incident, previous) {
     significant: hasSignificantChanges(changes)
   };
 
+  const incidentId = incident && (incident.id || incident._id);
+
   Promise.resolve()
     .then(() => emitEvent("incident.updated", payload))
+    .then((result) => {
+      if (incidentId) {
+        const details = {
+          summary: result && result.ok
+            ? "Webhook incident.updated delivered to n8n"
+            : result
+              ? "Webhook incident.updated failed to deliver"
+              : "Webhook incident.updated skipped (no N8N_WEBHOOK_URL)",
+          delivery: result || { skipped: true, reason: "no_webhook_url" },
+          significant: payload.significant,
+          changedFields: Object.keys(changes)
+        };
+        recordAutomationEventAsync(incidentId, "incident.updated", details);
+      }
+      return result;
+    })
     .catch((err) =>
       console.warn(`[automation] notifyIncidentUpdated error: ${err.message}`)
     );

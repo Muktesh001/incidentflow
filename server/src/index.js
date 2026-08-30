@@ -7,6 +7,7 @@ require("dotenv").config({
 const incidentRoutes = require("./routes/incidentRoutes");
 const express = require("express");
 const { connectDatabase } = require("./config/database");
+const { ensureIndexes } = require("./services/incidentHistoryService");
 
 const app = express();
 
@@ -25,6 +26,7 @@ app.get("/health", (req, res) => {
 async function startServer() {
   try {
     await connectDatabase();
+    ensureIndexes();
 
     app.listen(PORT, () => {
       console.log(`IncidentFlow API running on port ${PORT}`);
