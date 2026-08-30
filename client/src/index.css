@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-900 text-slate-100 antialiased;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+  }
+}
+
+@layer components {
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium uppercase tracking-wide;
+  }
+  .badge-status-open {
+    @apply bg-status-open/20 text-status-open ring-1 ring-inset ring-status-open/40;
+  }
+  .badge-status-investigating {
+    @apply bg-status-investigating/20 text-status-investigating ring-1 ring-inset ring-status-investigating/40;
+  }
+  .badge-status-mitigated {
+    @apply bg-status-mitigated/20 text-status-mitigated ring-1 ring-inset ring-status-mitigated/40;
+  }
+  .badge-status-resolved {
+    @apply bg-status-resolved/20 text-status-resolved ring-1 ring-inset ring-status-resolved/40;
+  }
+  .badge-status-closed {
+    @apply bg-status-closed/20 text-status-closed ring-1 ring-inset ring-status-closed/40;
+  }
+  .badge-severity-critical {
+    @apply bg-severity-critical/20 text-severity-critical ring-1 ring-inset ring-severity-critical/40;
+  }
+  .badge-severity-high {
+    @apply bg-severity-high/20 text-severity-high ring-1 ring-inset ring-severity-high/40;
+  }
+  .badge-severity-medium {
+    @apply bg-severity-medium/20 text-severity-medium ring-1 ring-inset ring-severity-medium/40;
+  }
+  .badge-severity-low {
+    @apply bg-severity-low/20 text-severity-low ring-1 ring-inset ring-severity-low/40;
+  }
+  .card {
+    @apply rounded-xl border border-slate-800 bg-slate-800/50 shadow-sm;
+  }
+}
