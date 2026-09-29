@@ -1,10 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getIncidentStats, listIncidents, healthCheck, createIncident, updateIncident, deleteIncident } from "../api/incidents.js";
 import { SeverityBadge, StatusBadge } from "./Badges.jsx";
 import IncidentFormModal from "./IncidentFormModal.jsx";
 import ConfirmDialog from "./ConfirmDialog.jsx";
 
 const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
+const SEVERITIES = ["critical", "high", "medium", "low"];
+const STATUSES = ["open", "investigating", "mitigated", "resolved", "closed"];
+const PAGE_SIZE = 25;
 
 function formatDate(value) {
   try {
@@ -35,6 +38,7 @@ function StatCard({ label, value, tone = "default" }) {
 export default function Dashboard({ onOpenIncident, authUser, onLogout, onGoLogin }) {
   const [stats, setStats] = useState(null);
   const [incidents, setIncidents] = useState([]);
+  const [incidentsTotal, setIncidentsTotal] = useState(null);
   const [apiStatus, setApiStatus] = useState({
     ok: false,
     loading: true,
@@ -42,6 +46,17 @@ export default function Dashboard({ onOpenIncident, authUser, onLogout, onGoLogi
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  const [filters, setFilters] = useState({
+    search: "",
+    severity: [],
+    status: [],
+    service: "",
+    from: "",
+    to: ""
+  });
+  const [filtersDraft, setFiltersDraft] = useState(filters);
+  const [page, setPage] = useState(0);
 
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -52,6 +67,47 @@ export default function Dashboard({ onOpenIncident, authUser, onLogout, onGoLogi
     setToast({ type, message });
     setTimeout(() => setToast(null), 3500);
   }
+
+  function toggleList(list, value) {
+    return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+  }
+
+  function resetFilters() {
+    const fresh = { search: "", severity: [], status: [], service: "", from: "", to: "" };
+    setFilters(fresh);
+    setFiltersDraft(fresh);
+    setPage(0);
+  }
+
+  function applyFilters() {
+    setFilters(filtersDraft);
+    setPage(0);
+  }
+
+  const offset = page * PAGE_SIZE;
+  const activeFilters = useMemo(() => {
+    const f = {};
+    if (filters.search) f.search = filters.search;
+    if (filters.severity.length) f.severity = filters.severity.join(",");
+    if (filters.status.length) f.status = filters.status.join(",");
+    if (filters.service) f.service = filters.service;
+    if (filters.from) f.from = filters.from;
+    if (filters.to) f.to = filters.to;
+    return f;
+  }, [filters]);
+
+  const serviceOptions = useMemo(() => {
+    if (!stats || !stats.byService) return [];
+    return Object.keys(stats.byService).sort();
+  }, [stats]);
+
+  const hasAnyFilter =
+    !!filters.search ||
+    filters.severity.length > 0 ||
+    filters.status.length > 0 ||
+    !!filters.service ||
+    !!filters.from ||
+    !!filters.to;
 
   async function loadAll() {
     setLoading(true);
@@ -65,10 +121,19 @@ export default function Dashboard({ onOpenIncident, authUser, onLogout, onGoLogi
     try {
       const [s, list] = await Promise.all([
         getIncidentStats(),
-        listIncidents({ limit: 50 })
+        listIncidents({ ...activeFilters, limit: PAGE_SIZE, offset })
       ]);
       setStats(s);
-      setIncidents(list || []);
+      if (Array.isArray(list)) {
+        setIncidents(list || []);
+        setIncidentsTotal(list.length < PAGE_SIZE ? offset + list.length : null);
+      } else if (list && Array.isArray(list.entries)) {
+        setIncidents(list.entries || []);
+        setIncidentsTotal(list.total ?? null);
+      } else {
+        setIncidents([]);
+        setIncidentsTotal(null);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -78,7 +143,8 @@ export default function Dashboard({ onOpenIncident, authUser, onLogout, onGoLogi
 
   useEffect(() => {
     loadAll();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(activeFilters), page]);
 
   async function handleCreate(payload) {
     await createIncident(payload);
@@ -272,17 +338,184 @@ export default function Dashboard({ onOpenIncident, authUser, onLogout, onGoLogi
           </section>
         )}
 
+        <section className="card p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-200">
+                Filters
+              </h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                {hasAnyFilter
+                  ? `${filters.severity.length + filters.status.length + (filters.service ? 1 : 0) + (filters.search ? 1 : 0) + ((filters.from || filters.to) ? 1 : 0)} filter${"s"} active`
+                  : "No active filters — showing all incidents"}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={resetFilters}
+                disabled={!hasAnyFilter}
+                className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+              >
+                Reset
+              </button>
+              <button
+                type="button"
+                onClick={applyFilters}
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
+              >
+                Apply Filters
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="sm:col-span-2 lg:col-span-2">
+              <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-slate-400">
+                Search
+              </label>
+              <input
+                type="text"
+                value={filtersDraft.search}
+                onChange={(e) =>
+                  setFiltersDraft((f) => ({ ...f, search: e.target.value }))
+                }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") applyFilters();
+                }}
+                placeholder="Search title or description…"
+                className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-slate-400">
+                Service
+              </label>
+              <select
+                value={filtersDraft.service}
+                onChange={(e) =>
+                  setFiltersDraft((f) => ({ ...f, service: e.target.value }))
+                }
+                className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+              >
+                <option value="">All services</option>
+                {serviceOptions.map((svc) => (
+                  <option key={svc} value={svc}>
+                    {svc}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-slate-400">
+                  From
+                </label>
+                <input
+                  type="date"
+                  value={filtersDraft.from}
+                  onChange={(e) =>
+                    setFiltersDraft((f) => ({ ...f, from: e.target.value }))
+                  }
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-slate-400">
+                  To
+                </label>
+                <input
+                  type="date"
+                  value={filtersDraft.to}
+                  onChange={(e) =>
+                    setFiltersDraft((f) => ({ ...f, to: e.target.value }))
+                  }
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-slate-400">
+                Severity
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {SEVERITIES.map((s) => {
+                  const active = filtersDraft.severity.includes(s);
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() =>
+                        setFiltersDraft((f) => ({
+                          ...f,
+                          severity: toggleList(f.severity, s)
+                        }))
+                      }
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition ${
+                        active ? "" : "opacity-60 hover:opacity-100"
+                      }`}
+                    >
+                      <SeverityBadge severity={s} />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-slate-400">
+                Status
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {STATUSES.map((s) => {
+                  const active = filtersDraft.status.includes(s);
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() =>
+                        setFiltersDraft((f) => ({
+                          ...f,
+                          status: toggleList(f.status, s)
+                        }))
+                      }
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition ${
+                        active ? "" : "opacity-60 hover:opacity-100"
+                      }`}
+                    >
+                      <StatusBadge status={s} />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section>
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
-              Recent Incidents
+              Incidents
               {!loading && incidents.length > 0 && (
                 <span className="ml-2 text-slate-500">
-                  ({incidents.length}{" "}
-                  {incidents.length === 1 ? "incident" : "incidents"})
+                  (showing {incidents.length}
+                  {incidentsTotal !== null
+                    ? ` of ${incidentsTotal}`
+                    : ""}
+                  {hasAnyFilter ? " — filtered" : ""})
                 </span>
               )}
             </h2>
+            {hasAnyFilter && (
+              <span className="badge bg-indigo-600/15 text-indigo-300 ring-1 ring-inset ring-indigo-600/30">
+                Filters active
+              </span>
+            )}
           </div>
 
           {loading ? (
@@ -293,13 +526,27 @@ export default function Dashboard({ onOpenIncident, authUser, onLogout, onGoLogi
             </div>
           ) : sortedIncidents.length === 0 ? (
             <div className="card p-10 text-center text-slate-400">
-              <p>No incidents yet.</p>
-              <button
-                onClick={() => setCreating(true)}
-                className="mt-3 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
-              >
-                Create the first incident
-              </button>
+              {hasAnyFilter ? (
+                <>
+                  <p>No incidents match your filters.</p>
+                  <button
+                    onClick={resetFilters}
+                    className="mt-3 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700"
+                  >
+                    Clear filters
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p>No incidents yet.</p>
+                  <button
+                    onClick={() => setCreating(true)}
+                    className="mt-3 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+                  >
+                    Create the first incident
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <div className="card overflow-hidden">
@@ -366,6 +613,37 @@ export default function Dashboard({ onOpenIncident, authUser, onLogout, onGoLogi
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {(page > 0 || incidents.length >= PAGE_SIZE) && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-slate-400 tabular-nums">
+                Page {page + 1}
+                {incidentsTotal !== null && (
+                  <> · of {Math.max(1, Math.ceil(incidentsTotal / PAGE_SIZE))}</>
+                )}
+                <span className="ml-2 text-slate-500">
+                  ({offset + 1}–{offset + incidents.length}
+                  {incidentsTotal !== null ? ` / ${incidentsTotal}` : ""})
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0 || loading}
+                  className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+                >
+                  ← Previous
+                </button>
+                <button
+                  onClick={() => setPage((p) => p + 1)}
+                  disabled={incidents.length < PAGE_SIZE || loading}
+                  className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+                >
+                  Next →
+                </button>
+              </div>
             </div>
           )}
         </section>
