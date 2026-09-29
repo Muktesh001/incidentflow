@@ -9,6 +9,7 @@ const pinoHttp = require("pino-http");
 const express = require("express");
 
 const incidentRoutes = require("./routes/incidentRoutes");
+const webhookRoutes = require("./routes/webhookRoutes");
 const { connectDatabase } = require("./config/database");
 const { ensureIndexes } = require("./services/incidentHistoryService");
 const { logger } = require("./config/logger");
@@ -60,11 +61,16 @@ app.get("/health", (req, res) => {
     status: "ok",
     service: "incidentflow-api",
     timestamp: new Date().toISOString(),
-    requestId: getRequestId() || req.requestId
+    requestId: getRequestId() || req.requestId,
+    integrations: {
+      n8nWebhook: process.env.N8N_WEBHOOK_URL ? "configured" : "not_configured",
+      n8nApiKey: process.env.N8N_API_KEY ? "configured" : "not_configured"
+    }
   });
 });
 
 app.use("/api/incidents", incidentRoutes);
+app.use("/api/webhooks", webhookRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

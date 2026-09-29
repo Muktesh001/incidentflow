@@ -1,0 +1,512 @@
+{
+  "name": "Incident Severity Response Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "scheduleTriggerTimes": [
+          {
+            "item": {
+              "hour": 0,
+              "minute": 0
+            }
+          }
+        ],
+        "mode": "everyMinute",
+        "options": {}
+      },
+      "id": "cron-trigger",
+      "name": "Cron Trigger (replace with webhook)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.INCIDENTFLOW_API_BASE}}/api/incidents?status=open&status=investigating",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-api-key",
+              "value": "={{$env.N8N_API_KEY}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-open-incidents",
+      "name": "Fetch Open Incidents",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "split-incidents",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.severity}}",
+              "operation": "equals",
+              "value2": "critical"
+            }
+          ]
+        }
+      },
+      "id": "if-critical",
+      "name": "Critical?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        80,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.severity}}",
+              "operation": "equals",
+              "value2": "high"
+            }
+          ]
+        }
+      },
+      "id": "if-high",
+      "name": "High?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        80,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.severity}}",
+              "operation": "equals",
+              "value2": "medium"
+            }
+          ]
+        }
+      },
+      "id": "if-medium",
+      "name": "Medium?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        80,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "🔴 CRITICAL: Page on-call engineer via PagerDuty + create dedicated Slack channel",
+        "options": {}
+      },
+      "id": "critical-page",
+      "name": "Page On-Call + Slack Channel",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        320,
+        -340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INCIDENTFLOW_API_BASE}}/api/webhooks/n8n",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-api-key",
+              "value": "={{$env.N8N_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "action",
+              "value": "automation.log"
+            },
+            {
+              "name": "payload.incidentId",
+              "value": "={{$json._id}}"
+            },
+            {
+              "name": "payload.eventType",
+              "value": "pagerduty.page_on_call"
+            },
+            {
+              "name": "payload.details.level",
+              "value": "critical"
+            },
+            {
+              "name": "payload.details.summary",
+              "value": "Automatically paged on-call engineer for critical incident"
+            }
+          ],
+          "options": {}
+        },
+        "options": {}
+      },
+      "id": "log-critical-page",
+      "name": "Log Pager Action",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        560,
+        -340
+      ]
+    },
+    {
+      "parameters": {
+        "content": "🟠 HIGH: Trigger PagerDuty alert, notify #incidents Slack channel",
+        "options": {}
+      },
+      "id": "high-pd",
+      "name": "PagerDuty Alert + Slack",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        320,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INCIDENTFLOW_API_BASE}}/api/webhooks/n8n",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-api-key",
+              "value": "={{$env.N8N_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "action",
+              "value": "incident.add_note"
+            },
+            {
+              "name": "payload.incidentId",
+              "value": "={{$json._id}}"
+            },
+            {
+              "name": "payload.note",
+              "value": "🤖 MEDIUM severity: attached AI-generated runbook recommendations. See /analyze endpoint output."
+            }
+          ],
+          "options": {}
+        },
+        "options": {}
+      },
+      "id": "medium-add-note",
+      "name": "Add AI Runbook Note",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        320,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INCIDENTFLOW_API_BASE}}/api/webhooks/n8n",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-api-key",
+              "value": "={{$env.N8N_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "action",
+              "value": "incident.add_note"
+            },
+            {
+              "name": "payload.incidentId",
+              "value": "={{$json._id}}"
+            },
+            {
+              "name": "payload.note",
+              "value": "🤖 LOW severity: auto-responded with standard troubleshooting guide. If still an issue after 15 minutes please escalate."
+            }
+          ],
+          "options": {}
+        },
+        "options": {}
+      },
+      "id": "low-add-note",
+      "name": "Low: Auto-Respond Note",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        320,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INCIDENTFLOW_API_BASE}}/api/webhooks/n8n",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-api-key",
+              "value": "={{$env.N8N_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "action",
+              "value": "incident.update"
+            },
+            {
+              "name": "payload.incidentId",
+              "value": "={{$json._id}}"
+            },
+            {
+              "name": "payload.updates.status",
+              "value": "mitigated"
+            }
+          ],
+          "options": {}
+        },
+        "options": {}
+      },
+      "id": "low-set-mitigated",
+      "name": "Low: Set Mitigated",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        560,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-back",
+      "name": "Loop Back for More",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        800,
+        -140
+      ],
+      "webhookId": ""
+    }
+  ],
+  "connections": {
+    "Cron Trigger (replace with webhook)": {
+      "main": [
+        [
+          {
+            "node": "Fetch Open Incidents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Open Incidents": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Critical?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "High?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Medium?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Back for More",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critical?": {
+      "main": [
+        [
+          {
+            "node": "Page On-Call + Slack Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High?": {
+      "main": [
+        [
+          {
+            "node": "PagerDuty Alert + Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Medium?": {
+      "main": [
+        [
+          {
+            "node": "Add AI Runbook Note",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Low: Auto-Respond Note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Page On-Call + Slack Channel": {
+      "main": [
+        [
+          {
+            "node": "Log Pager Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Pager Action": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "PagerDuty Alert + Slack": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Add AI Runbook Note": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Low: Auto-Respond Note": {
+      "main": [
+        [
+          {
+            "node": "Low: Set Mitigated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Low: Set Mitigated": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-01T00:00:00.000Z",
+  "versionId": "1"
+}

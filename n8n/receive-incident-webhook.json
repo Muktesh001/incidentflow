@@ -1,0 +1,319 @@
+{
+  "name": "Receive Incident Webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "incidentflow-inbound",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -460,
+        -140
+      ],
+      "webhookId": "incidentflow-inbound"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.event}}",
+              "operation": "equals",
+              "value2": "incident.created"
+            }
+          ]
+        }
+      },
+      "id": "if-created",
+      "name": "Incident Created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.incident.severity}}",
+              "operation": "equals",
+              "value2": "critical"
+            },
+            {
+              "value1": "={{$json.incident.severity}}",
+              "operation": "equals",
+              "value2": "high"
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "if-high-severity",
+      "name": "High/Critical Severity?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        40,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "values": {
+            "string": [
+              {
+                "name": "prompt",
+                "value": "=Analyze this incident and provide root cause category, severity sanity check, and 3 prioritized runbook recommendations:\\nTitle: {{$json.incident.title}}\\nDescription: {{$json.incident.description}}\\nService: {{$json.incident.service}}\\nSeverity: {{$json.incident.severity}}"
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      "id": "set-ai-prompt",
+      "name": "Set AI Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        280,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INCIDENTFLOW_API_BASE}}/api/incidents/{{$json.incidentId}}/analyze",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-api-key",
+              "value": "={{$env.N8N_API_KEY}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ai-analyze-call",
+      "name": "Call Incident AI Analyze",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        520,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "=🚨 High-Severity Incident #{{$json.incidentId}}\\nTitle: {{$json.incident.title}}\\nService: {{$json.incident.service}}\\nSeverity: {{$json.incident.severity}}\\nURL: {{$env.INCIDENTFLOW_API_BASE}}/#/incidents/{{$json.incidentId}}",
+        "options": {}
+      },
+      "id": "notify-slack-placeholder",
+      "name": "Notify Slack (configure)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        280,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INCIDENTFLOW_API_BASE}}/api/webhooks/n8n",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-api-key",
+              "value": "={{$env.N8N_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "action",
+              "value": "incident.add_note"
+            },
+            {
+              "name": "payload.incidentId",
+              "value": "={{$json.incidentId}}"
+            },
+            {
+              "name": "payload.note",
+              "value": "=🤖 Automated analysis summary:\\n{{ JSON.stringify($node['Call Incident AI Analyze'].json, null, 2) }}"
+            }
+          ],
+          "options": {}
+        },
+        "options": {}
+      },
+      "id": "post-analysis-note",
+      "name": "Post Analysis Note Back",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        760,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "ℹ️ Medium/Low incident triaged",
+        "options": {}
+      },
+      "id": "low-severity-noop",
+      "name": "Medium/Low: Auto-triage",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        280,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstOutgoingItem",
+        "responseBody": "{\"received\":true,\"workflow\":\"receive-incident-webhook\"}",
+        "options": {}
+      },
+      "id": "respond-to-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        -140
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Incident Created?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Incident Created?": {
+      "main": [
+        [
+          {
+            "node": "High/Critical Severity?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High/Critical Severity?": {
+      "main": [
+        [
+          {
+            "node": "Set AI Prompt",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Slack (configure)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Medium/Low: Auto-triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set AI Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call Incident AI Analyze",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Incident AI Analyze": {
+      "main": [
+        [
+          {
+            "node": "Post Analysis Note Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Analysis Note Back": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Slack (configure)": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Medium/Low: Auto-triage": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
