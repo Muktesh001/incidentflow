@@ -10,10 +10,12 @@ const express = require("express");
 
 const incidentRoutes = require("./routes/incidentRoutes");
 const webhookRoutes = require("./routes/webhookRoutes");
+const userRoutes = require("./routes/userRoutes");
 const { connectDatabase } = require("./config/database");
 const { ensureIndexes } = require("./services/incidentHistoryService");
 const { logger } = require("./config/logger");
 const { requestIdMiddleware, getRequestId } = require("./middleware/requestId");
+const { authMiddleware, AUTH_REQUIRED } = require("./middleware/auth");
 const { errorHandler, notFoundHandler } = require("./middleware/errorHandler");
 
 const app = express();
@@ -56,22 +58,34 @@ app.use(
 
 app.use(express.json({ limit: "1mb" }));
 
+app.use(authMiddleware);
+
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
     service: "incidentflow-api",
     timestamp: new Date().toISOString(),
     requestId: getRequestId() || req.requestId,
+    auth: {
+      required: AUTH_REQUIRED,
+      authenticated: !!req.user,
+      user: req.user
+        ? { id: req.user.id, role: req.user.role }
+        : null
+    },
     integrations: {
       n8nWebhook: process.env.N8N_WEBHOOK_URL ? "configured" : "not_configured",
       n8nApiKey: process.env.N8N_API_KEY ? "configured" : "not_configured",
-      gemini: process.env.GEMINI_API_KEY ? "configured" : "not_configured"
+      gemini: process.env.GEMINI_API_KEY ? "configured" : "not_configured",
+      jwt: process.env.JWT_SECRET ? "configured" : "not_configured"
     }
   });
 });
 
 app.use("/api/incidents", incidentRoutes);
 app.use("/api/webhooks", webhookRoutes);
+app.use("/api/auth", userRoutes);
+app.use("/api/users", userRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

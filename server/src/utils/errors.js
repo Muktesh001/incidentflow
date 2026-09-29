@@ -50,10 +50,20 @@ function createForbiddenError(message = "Forbidden", options = {}) {
   });
 }
 
+function createConflictError(message = "Conflict", options = {}) {
+  return new AppError(message, {
+    statusCode: 409,
+    code: "CONFLICT",
+    ...options,
+    isOperational: true
+  });
+}
+
 module.exports = {
   AppError,
   createValidationError,
   createNotFoundError,
   createUnauthorizedError,
-  createForbiddenError
+  createForbiddenError,
+  createConflictError
 };

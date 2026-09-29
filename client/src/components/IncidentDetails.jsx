@@ -130,7 +130,7 @@ function TimelineEntry({ entry }) {
 
 const HISTORY_BATCH = 20;
 
-export default function IncidentDetails({ incidentId, onBack, afterDelete }) {
+export default function IncidentDetails({ incidentId, onBack, afterDelete, authUser, onLogout, onGoLogin }) {
   const [incident, setIncident] = useState(null);
   const [history, setHistory] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -285,6 +285,26 @@ export default function IncidentDetails({ incidentId, onBack, afterDelete }) {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {authUser ? (
+              <div className="flex items-center gap-2 pr-1">
+                <div className="hidden sm:flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600/80 text-xs font-semibold">
+                  {String(authUser.name || authUser.email || "?").slice(0,1).toUpperCase()}
+                </div>
+                <button
+                  onClick={onLogout}
+                  className="rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                >
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={onGoLogin}
+                className="rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs text-slate-100 hover:bg-slate-700"
+              >
+                Sign In
+              </button>
+            )}
             <button
               onClick={() => setEditing(true)}
               disabled={!incident}

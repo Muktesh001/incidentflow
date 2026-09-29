@@ -32,7 +32,7 @@ function StatCard({ label, value, tone = "default" }) {
   );
 }
 
-export default function Dashboard({ onOpenIncident }) {
+export default function Dashboard({ onOpenIncident, authUser, onLogout, onGoLogin }) {
   const [stats, setStats] = useState(null);
   const [incidents, setIncidents] = useState([]);
   const [apiStatus, setApiStatus] = useState({
@@ -132,6 +132,34 @@ export default function Dashboard({ onOpenIncident }) {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {authUser ? (
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600/80 text-xs font-semibold">
+                  {String(authUser.name || authUser.email || "?").slice(0,1).toUpperCase()}
+                </div>
+                <div className="hidden sm:block">
+                  <p className="text-xs font-medium text-slate-100">
+                    {authUser.name || authUser.email}
+                  </p>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-500">
+                    {authUser.role || "user"}
+                  </p>
+                </div>
+                <button
+                  onClick={onLogout}
+                  className="rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                >
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={onGoLogin}
+                className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 hover:bg-slate-700"
+              >
+                Sign In
+              </button>
+            )}
             <span className="text-xs text-slate-400">API</span>
             {apiStatus.loading ? (
               <span className="badge bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40">
