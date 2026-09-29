@@ -1,5 +1,5 @@
 const { AsyncLocalStorage } = require("async_hooks");
-const { v4: uuidv4 } = require("uuid");
+const crypto = require("crypto");
 
 const HEADER_NAME = "x-request-id";
 const asyncLocalStorage = new AsyncLocalStorage();
@@ -16,7 +16,9 @@ function getRequestStore() {
 function requestIdMiddleware(req, res, next) {
   const existing = req.headers[HEADER_NAME];
   const requestId =
-    typeof existing === "string" && existing.length > 0 ? existing : uuidv4();
+    typeof existing === "string" && existing.length > 0
+      ? existing
+      : crypto.randomUUID();
 
   res.setHeader(HEADER_NAME, requestId);
   req.requestId = requestId;
