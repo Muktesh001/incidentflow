@@ -5,6 +5,8 @@ require("dotenv").config({
 });
 
 const cors = require("cors");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 const pinoHttp = require("pino-http");
 const express = require("express");
 
@@ -18,12 +20,40 @@ const { requestIdMiddleware, getRequestId } = require("./middleware/requestId");
 const { authMiddleware, AUTH_REQUIRED } = require("./middleware/auth");
 const { errorHandler, notFoundHandler } = require("./middleware/errorHandler");
 
+const NODE_ENV = (process.env.NODE_ENV || "development").toLowerCase();
+const IS_PRODUCTION = NODE_ENV === "production";
+const IS_TEST = NODE_ENV === "test";
+
+function parsePositiveInt(raw, fallback) {
+  if (raw === undefined || raw === null || raw === "") return fallback;
+  const n = parseInt(String(raw), 10);
+  if (Number.isNaN(n) || n <= 0) return fallback;
+  return n;
+}
+
 async function createApp() {
   const app = express();
 
   const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
+  const GLOBAL_RATE_WINDOW_MS =
+    parsePositiveInt(process.env.RATE_LIMIT_WINDOW_SEC, 60) * 1000;
+  const GLOBAL_RATE_MAX = parsePositiveInt(process.env.RATE_LIMIT_MAX, 600);
+  const AUTH_RATE_WINDOW_MS =
+    parsePositiveInt(process.env.RATE_LIMIT_AUTH_WINDOW_SEC, 900) * 1000;
+  const AUTH_RATE_MAX = parsePositiveInt(process.env.RATE_LIMIT_AUTH_MAX, 15);
 
   app.set("trust proxy", 1);
+
+  if (!IS_TEST) {
+    app.use(
+      helmet({
+        contentSecurityPolicy: IS_PRODUCTION ? undefined : false,
+        crossOriginEmbedderPolicy: !IS_PRODUCTION ? false : undefined,
+        referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+        hsts: IS_PRODUCTION ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false
+      })
+    );
+  }
 
   app.use(requestIdMiddleware);
 
@@ -55,6 +85,40 @@ async function createApp() {
       maxAge: 600
     })
   );
+
+  if (!IS_TEST) {
+    const globalLimiter = rateLimit({
+      windowMs: GLOBAL_RATE_WINDOW_MS,
+      max: GLOBAL_RATE_MAX,
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: {
+        error: "Too many requests",
+        code: "RATE_LIMITED",
+        retryAfterSec: Math.ceil(GLOBAL_RATE_WINDOW_MS / 1000)
+      },
+      keyGenerator: (req) =>
+        req.ip || (req.headers["x-forwarded-for"] || "").toString().split(",")[0] || "unknown"
+    });
+    app.use(globalLimiter);
+
+    const authLimiter = rateLimit({
+      windowMs: AUTH_RATE_WINDOW_MS,
+      max: AUTH_RATE_MAX,
+      standardHeaders: true,
+      legacyHeaders: false,
+      skipSuccessfulRequests: false,
+      message: {
+        error: "Too many auth attempts. Please slow down.",
+        code: "AUTH_RATE_LIMITED",
+        retryAfterSec: Math.ceil(AUTH_RATE_WINDOW_MS / 1000)
+      },
+      keyGenerator: (req) =>
+        req.ip || (req.headers["x-forwarded-for"] || "").toString().split(",")[0] || "unknown"
+    });
+    app.use("/api/auth/login", authLimiter);
+    app.use("/api/auth/register", authLimiter);
+  }
 
   app.use(express.json({ limit: "1mb" }));
 
