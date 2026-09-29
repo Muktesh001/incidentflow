@@ -64,7 +64,8 @@ app.get("/health", (req, res) => {
     requestId: getRequestId() || req.requestId,
     integrations: {
       n8nWebhook: process.env.N8N_WEBHOOK_URL ? "configured" : "not_configured",
-      n8nApiKey: process.env.N8N_API_KEY ? "configured" : "not_configured"
+      n8nApiKey: process.env.N8N_API_KEY ? "configured" : "not_configured",
+      gemini: process.env.GEMINI_API_KEY ? "configured" : "not_configured"
     }
   });
 });

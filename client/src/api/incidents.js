@@ -49,6 +49,16 @@ export function deleteIncident(id) {
   });
 }
 
+export function analyzeIncident(id, options = {}) {
+  const query = new URLSearchParams();
+  if (options.persist === false) query.append("persist", "false");
+  const qs = query.toString();
+  return apiClient.request(`/api/incidents/${id}/analyze${qs ? `?${qs}` : ""}`, {
+    method: "POST",
+    body: JSON.stringify(options.body || {})
+  });
+}
+
 export function healthCheck() {
   return apiClient.request("/health");
 }

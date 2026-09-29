@@ -9,6 +9,7 @@ const {
   updateIncidentHandler,
   deleteIncidentHandler
 } = require("../controllers/incidentController");
+const { analyzeIncidentHandler } = require("../controllers/aiController");
 
 const router = express.Router();
 
@@ -16,6 +17,7 @@ router.post("/", createIncidentHandler);
 router.get("/", getIncidentsHandler);
 router.get("/stats", getIncidentStatsHandler);
 router.get("/:id/history", getIncidentHistoryHandler);
+router.post("/:id/analyze", analyzeIncidentHandler);
 router.get("/:id", getIncidentHandler);
 router.put("/:id", updateIncidentHandler);
 router.delete("/:id", deleteIncidentHandler);

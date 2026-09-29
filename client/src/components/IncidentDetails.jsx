@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { getIncident, getIncidentHistory, updateIncident } from "../api/incidents.js";
+import { getIncident, getIncidentHistory, updateIncident, deleteIncident, analyzeIncident } from "../api/incidents.js";
 import { SeverityBadge, StatusBadge } from "./Badges.jsx";
 import IncidentFormModal from "./IncidentFormModal.jsx";
 import ConfirmDialog from "./ConfirmDialog.jsx";
-import { deleteIncident } from "../api/incidents.js";
 
 const SEVERITIES = ["critical", "high", "medium", "low"];
 const STATUSES = ["open", "investigating", "mitigated", "resolved", "closed"];
@@ -145,6 +144,10 @@ export default function IncidentDetails({ incidentId, onBack, afterDelete }) {
   const [quickSeverity, setQuickSeverity] = useState(null);
   const [toast, setToast] = useState(null);
 
+  const [aiAnalysis, setAiAnalysis] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState(null);
+
   function showToast(type, message) {
     setToast({ type, message });
     setTimeout(() => setToast(null), 3500);
@@ -234,6 +237,21 @@ export default function IncidentDetails({ incidentId, onBack, afterDelete }) {
     } catch (err) {
       setConfirmDelete(false);
       showToast("error", err.message || "Failed to delete");
+    }
+  }
+
+  async function runAnalysis() {
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const result = await analyzeIncident(incidentId);
+      setAiAnalysis(result && result.analysis ? result.analysis : result);
+      showToast("success", "Analysis complete");
+    } catch (err) {
+      setAiError(err.message || "Analysis failed");
+      showToast("error", err.message || "Analysis failed");
+    } finally {
+      setAiLoading(false);
     }
   }
 
@@ -366,7 +384,207 @@ export default function IncidentDetails({ incidentId, onBack, afterDelete }) {
           )}
         </section>
 
-        <section className="lg:col-span-2">
+        <section className="lg:col-span-2 space-y-6">
+          {!loading && !error && incident && (
+            <div className="card">
+              <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
+                <div>
+                  <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-200">
+                    AI Incident Analysis
+                  </h2>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {aiAnalysis
+                      ? `Source: ${aiAnalysis.source} · Model: ${aiAnalysis.model} · Priority Score: ${aiAnalysis.priorityScore ?? "-"}`
+                      : aiLoading
+                      ? "Analyzing…"
+                      : "Run automated SRE triage, severity sanity check, and remediation steps"}
+                  </p>
+                </div>
+                <button
+                  onClick={runAnalysis}
+                  disabled={!incident || aiLoading}
+                  className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+                >
+                  {aiLoading ? "Running…" : aiAnalysis ? "Re-analyze" : "Run Analysis"}
+                </button>
+              </div>
+              <div className="px-5 py-5">
+                {aiLoading && (
+                  <div className="space-y-3">
+                    <div className="h-4 w-1/3 animate-pulse rounded bg-slate-800" />
+                    <div className="h-24 animate-pulse rounded bg-slate-800/60" />
+                    <div className="h-24 animate-pulse rounded bg-slate-800/60" />
+                  </div>
+                )}
+                {!aiLoading && aiError && (
+                  <div className="rounded-md border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                    {aiError}
+                  </div>
+                )}
+                {!aiLoading && !aiError && !aiAnalysis && (
+                  <div className="py-8 text-center text-sm text-slate-500">
+                    <p>No analysis yet. Click "Run Analysis" to generate AI-powered triage.</p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      (Works without API key using rule-based heuristics; configure GEMINI_API_KEY for LLM quality)
+                    </p>
+                  </div>
+                )}
+                {!aiLoading && !aiError && aiAnalysis && (
+                  <div className="space-y-5">
+                    {aiAnalysis.summary && (
+                      <div>
+                        <div className="text-xs uppercase tracking-wider text-slate-500">Summary</div>
+                        <p className="mt-1 text-sm text-slate-200">{aiAnalysis.summary}</p>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <div>
+                        <div className="text-xs uppercase tracking-wider text-slate-500">Category</div>
+                        <div className="mt-1 inline-flex items-center rounded-md bg-indigo-600/15 px-2.5 py-1 text-xs font-medium text-indigo-300 ring-1 ring-inset ring-indigo-600/30">
+                          {aiAnalysis.category || "Unknown"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs uppercase tracking-wider text-slate-500">Priority Score</div>
+                        <div className="mt-1 font-mono text-lg font-semibold text-amber-300 tabular-nums">
+                          {aiAnalysis.priorityScore ?? "-"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs uppercase tracking-wider text-slate-500">Analyzed</div>
+                        <div className="mt-1 text-xs text-slate-400 tabular-nums">
+                          {aiAnalysis.analyzedAt ? formatDate(aiAnalysis.analyzedAt) : "-"}
+                        </div>
+                      </div>
+                    </div>
+
+                    {aiAnalysis.severitySanity && (
+                      <div className={`rounded-md border p-4 ${
+                        aiAnalysis.severitySanity.isSane
+                          ? "border-emerald-700/40 bg-emerald-600/5"
+                          : "border-amber-700/40 bg-amber-600/10"
+                      }`}>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-xs font-medium uppercase tracking-wider text-slate-400">
+                            Severity Sanity Check
+                          </div>
+                          <span className={`badge ring-1 ring-inset ${
+                            aiAnalysis.severitySanity.isSane
+                              ? "bg-status-resolved/20 text-status-resolved ring-status-resolved/40"
+                              : "bg-severity-high/20 text-severity-high ring-severity-high/40"
+                          }`}>
+                            {aiAnalysis.severitySanity.isSane ? "PASS" : "REVIEW"}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-sm text-slate-200">
+                          {aiAnalysis.severitySanity.recommendation}
+                        </p>
+                        {aiAnalysis.severitySanity.reasons && aiAnalysis.severitySanity.reasons.length > 0 && (
+                          <ul className="mt-2 list-inside list-disc space-y-0.5 text-xs text-slate-400">
+                            {aiAnalysis.severitySanity.reasons.map((r, i) => (
+                              <li key={i}>{r}</li>
+                            ))}
+                          </ul>
+                        )}
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                          <span className="text-slate-500">Declared:</span>
+                          <SeverityBadge severity={aiAnalysis.severitySanity.declaredSeverity} />
+                          <span className="text-slate-500 ml-2">Suggested:</span>
+                          <SeverityBadge severity={aiAnalysis.severitySanity.suggestedSeverity} />
+                        </div>
+                      </div>
+                    )}
+
+                    {aiAnalysis.recommendations && aiAnalysis.recommendations.length > 0 && (
+                      <div>
+                        <div className="text-xs uppercase tracking-wider text-slate-500">
+                          Recommended Response ({aiAnalysis.recommendations.length})
+                        </div>
+                        <ol className="mt-2 space-y-3">
+                          {aiAnalysis.recommendations.map((rec, i) => (
+                            <li
+                              key={i}
+                              className="rounded-md border border-slate-800 bg-slate-900/40 p-3"
+                            >
+                              <div className="flex items-start gap-3">
+                                <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-600/30 text-xs font-bold text-indigo-200 ring-1 ring-inset ring-indigo-600/40 tabular-nums">
+                                  {rec.priority ?? i + 1}
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-sm font-medium text-slate-100">
+                                    {rec.title}
+                                  </div>
+                                  {rec.steps && rec.steps.length > 0 && (
+                                    <ul className="mt-1.5 list-inside list-disc space-y-0.5 text-xs text-slate-400">
+                                      {rec.steps.map((s, j) => (
+                                        <li key={j}>{s}</li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </div>
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      {aiAnalysis.suggestedCommands && aiAnalysis.suggestedCommands.length > 0 && (
+                        <div>
+                          <div className="text-xs uppercase tracking-wider text-slate-500">
+                            Suggested Commands
+                          </div>
+                          <div className="mt-2 space-y-2">
+                            {aiAnalysis.suggestedCommands.map((c, i) => (
+                              <div
+                                key={i}
+                                className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2"
+                              >
+                                <div className="text-xs font-medium text-slate-300">{c.label}</div>
+                                <code className="mt-1 block break-all font-mono text-xs text-emerald-300">
+                                  {c.command}
+                                </code>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {aiAnalysis.usefulLinks && aiAnalysis.usefulLinks.length > 0 && (
+                        <div>
+                          <div className="text-xs uppercase tracking-wider text-slate-500">
+                            Useful Links
+                          </div>
+                          <div className="mt-2 space-y-1.5">
+                            {aiAnalysis.usefulLinks.map((l, i) => (
+                              <a
+                                key={i}
+                                href={l.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs text-sky-300 hover:bg-slate-800/60 hover:text-sky-200"
+                              >
+                                🔗 {l.label}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {aiAnalysis.error && (
+                      <div className="rounded-md border border-amber-700/40 bg-amber-600/10 px-3 py-2 text-xs text-amber-300">
+                        ⚠️ LLM call failed; using heuristic fallback: {aiAnalysis.error}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="card">
             <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
               <div>
