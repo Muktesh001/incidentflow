@@ -19,6 +19,9 @@ const { logger } = require("./config/logger");
 const { requestIdMiddleware, getRequestId } = require("./middleware/requestId");
 const { authMiddleware, AUTH_REQUIRED } = require("./middleware/auth");
 const { errorHandler, notFoundHandler } = require("./middleware/errorHandler");
+const { metricsMiddleware, metricsHandler } = require("./middleware/metrics");
+const openapiSpec = require("./docs/openapi.js");
+const swaggerUi = require("swagger-ui-express");
 
 const NODE_ENV = (process.env.NODE_ENV || "development").toLowerCase();
 const IS_PRODUCTION = NODE_ENV === "production";
@@ -43,6 +46,10 @@ async function createApp() {
   const AUTH_RATE_MAX = parsePositiveInt(process.env.RATE_LIMIT_AUTH_MAX, 15);
 
   app.set("trust proxy", 1);
+
+  app.use(metricsMiddleware);
+
+  app.get("/metrics", metricsHandler);
 
   if (!IS_TEST) {
     app.use(
@@ -150,6 +157,23 @@ async function createApp() {
   app.use("/api/webhooks", webhookRoutes);
   app.use("/api/auth", userRoutes);
   app.use("/api/users", userRoutes);
+
+  // Swagger / OpenAPI interactive docs
+  app.get("/api-docs.json", (_req, res) => {
+    res.setHeader("Content-Type", "application/json");
+    res.json(openapiSpec);
+  });
+  app.use(
+    "/api-docs",
+    swaggerUi.serve,
+    swaggerUi.setup(openapiSpec, {
+      customSiteTitle: "IncidentFlow API Docs",
+      explorer: true
+    })
+  );
+  app.get("/", (_req, res) => {
+    res.redirect("/api-docs");
+  });
 
   app.use(notFoundHandler);
   app.use(errorHandler);
