@@ -1,4 +1,5 @@
 const { MongoClient } = require("mongodb");
+const { logger } = require("./logger");
 
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017";
 const DB_NAME = process.env.MONGO_DB_NAME || "incidentflow";
@@ -13,9 +14,9 @@ async function connectDatabase() {
 
     db = client.db(DB_NAME);
 
-    console.log("MongoDB connected successfully");
+    logger.info({ db: DB_NAME, uri: `${MONGO_URI.split("@").pop().split("?")[0]}` }, "MongoDB connected successfully");
   } catch (error) {
-    console.error("MongoDB connection failed:", error);
+    logger.error({ err: error, message: error && error.message ? error.message : String(error) }, "MongoDB connection failed");
     throw error;
   }
 }

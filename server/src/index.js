@@ -4,24 +4,70 @@ require("dotenv").config({
   path: path.resolve(__dirname, "..", "..", ".env")
 });
 
-const incidentRoutes = require("./routes/incidentRoutes");
+const cors = require("cors");
+const pinoHttp = require("pino-http");
 const express = require("express");
+
+const incidentRoutes = require("./routes/incidentRoutes");
 const { connectDatabase } = require("./config/database");
 const { ensureIndexes } = require("./services/incidentHistoryService");
+const { logger } = require("./config/logger");
+const { requestIdMiddleware, getRequestId } = require("./middleware/requestId");
+const { errorHandler, notFoundHandler } = require("./middleware/errorHandler");
 
 const app = express();
 
 const PORT = process.env.PORT || 5000;
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
 
-app.use(express.json());
-app.use("/api/incidents", incidentRoutes);
+app.set("trust proxy", 1);
+
+app.use(requestIdMiddleware);
+
+app.use(
+  pinoHttp({
+    logger,
+    genReqId: (req, res) => {
+      const id = getRequestId() || req.requestId;
+      if (id && res) {
+        try {
+          res.setHeader("x-request-id", id);
+        } catch (_err) {
+          /* ignore */
+        }
+      }
+      return id;
+    },
+    autoLogging: {
+      ignore: (req) => req.url === "/health" && req.method === "GET"
+    }
+  })
+);
+
+app.use(
+  cors({
+    origin: CORS_ORIGIN === "*" ? true : CORS_ORIGIN.split(",").map((s) => s.trim()),
+    credentials: CORS_ORIGIN !== "*",
+    exposedHeaders: ["x-request-id"],
+    maxAge: 600
+  })
+);
+
+app.use(express.json({ limit: "1mb" }));
 
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
-    service: "incidentflow-api"
+    service: "incidentflow-api",
+    timestamp: new Date().toISOString(),
+    requestId: getRequestId() || req.requestId
   });
 });
+
+app.use("/api/incidents", incidentRoutes);
+
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 async function startServer() {
   try {
@@ -29,10 +75,13 @@ async function startServer() {
     ensureIndexes();
 
     app.listen(PORT, () => {
-      console.log(`IncidentFlow API running on port ${PORT}`);
+      logger.info(`IncidentFlow API running on port ${PORT}`);
     });
   } catch (error) {
-    console.error("Server startup failed");
+    logger.fatal(
+      { err: error, message: error && error.message ? error.message : String(error) },
+      "Server startup failed"
+    );
     process.exit(1);
   }
 }

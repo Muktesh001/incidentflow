@@ -1,3 +1,4 @@
+const { logger } = require("../config/logger");
 const WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
 const COMPARABLE_FIELDS = ["title", "description", "service", "severity", "status"];
 const SIGNIFICANT_FIELDS = ["severity", "status"];
@@ -49,7 +50,8 @@ function hasSignificantChanges(changes) {
 
 async function emitEvent(eventType, payload) {
   if (!WEBHOOK_URL) {
-    return;
+    logger.debug({ eventType }, "[automation] N8N_WEBHOOK_URL not set; skipping emit");
+    return { ok: false, skipped: true, reason: "no_webhook_url" };
   }
 
   try {
@@ -69,20 +71,23 @@ async function emitEvent(eventType, payload) {
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
-      console.warn(
-        `[automation] n8n webhook returned ${response.status} for ${eventType}: ${text}`
+      logger.warn(
+        { eventType, status: response.status, responsePreview: text.slice(0, 500) },
+        `[automation] n8n webhook returned ${response.status} for ${eventType}`
       );
       return { ok: false, status: response.status };
     }
 
     const responseBody = await response.text().catch(() => "");
-    console.log(
-      `[automation] ${eventType} delivered to n8n (status=${response.status})`
+    logger.info(
+      { eventType, status: response.status, bodyPreview: responseBody.slice(0, 200) },
+      `[automation] ${eventType} delivered to n8n`
     );
     return { ok: true, status: response.status, body: responseBody };
   } catch (error) {
-    console.warn(
-      `[automation] Failed to deliver ${eventType} webhook: ${error.message}`
+    logger.warn(
+      { eventType, err: error, message: error && error.message ? error.message : String(error) },
+      `[automation] Failed to deliver ${eventType} webhook`
     );
     return { ok: false, error: error.message };
   }
@@ -112,7 +117,7 @@ function notifyIncidentCreated(incident) {
       return result;
     })
     .catch((err) =>
-      console.warn(`[automation] notifyIncidentCreated error: ${err.message}`)
+      logger.warn({ err, message: err && err.message ? err.message : String(err) }, "[automation] notifyIncidentCreated error")
     );
 }
 
@@ -120,6 +125,7 @@ function notifyIncidentUpdated(incident, previous) {
   const changes = buildChanges(previous, incident);
 
   if (!hasChanges(changes)) {
+    logger.debug({ incidentId: String(incident && (incident.id || incident._id || "?")) }, "[automation] no changes detected; skipping notifyIncidentUpdated");
     return;
   }
 
@@ -151,7 +157,7 @@ function notifyIncidentUpdated(incident, previous) {
       return result;
     })
     .catch((err) =>
-      console.warn(`[automation] notifyIncidentUpdated error: ${err.message}`)
+      logger.warn({ err, message: err && err.message ? err.message : String(err) }, "[automation] notifyIncidentUpdated error")
     );
 }
 

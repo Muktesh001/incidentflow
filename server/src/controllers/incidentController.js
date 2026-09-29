@@ -1,5 +1,6 @@
 const { ObjectId } = require("mongodb");
 const { getDatabase } = require("../config/database");
+const { logger } = require("../config/logger");
 const {
   createIncident,
   updateIncident,
@@ -18,6 +19,10 @@ const {
   recordIncidentUpdatedAsync,
   getIncidentHistory
 } = require("../services/incidentHistoryService");
+const {
+  createValidationError,
+  createNotFoundError
+} = require("../utils/errors");
 
 const COMPARABLE_FIELDS = ["title", "description", "service", "severity", "status"];
 
@@ -65,25 +70,21 @@ function parseFilterQuery(req) {
 
   for (const s of statusList) {
     if (!isValidStatus(s)) {
-      throw {
-        type: "validation",
+      throw createValidationError("Invalid status: " + s, {
         field: "status",
         value: s,
-        message: "Invalid status: " + s,
-        allowed: VALID_STATUSES
-      };
+        allowedValues: VALID_STATUSES
+      });
     }
   }
 
   for (const s of severityList) {
     if (!isValidSeverity(s)) {
-      throw {
-        type: "validation",
+      throw createValidationError("Invalid severity: " + s, {
         field: "severity",
         value: s,
-        message: "Invalid severity: " + s,
-        allowed: VALID_SEVERITIES
-      };
+        allowedValues: VALID_SEVERITIES
+      });
     }
   }
 
@@ -116,12 +117,10 @@ function parseFilterQuery(req) {
       if (!Number.isNaN(d.getTime())) {
         query.createdAt.$gte = d;
       } else {
-        throw {
-          type: "validation",
+        throw createValidationError("Invalid from date: " + from, {
           field: "from",
-          value: from,
-          message: "Invalid from date: " + from
-        };
+          value: from
+        });
       }
     }
     if (to !== undefined) {
@@ -129,12 +128,10 @@ function parseFilterQuery(req) {
       if (!Number.isNaN(d.getTime())) {
         query.createdAt.$lte = d;
       } else {
-        throw {
-          type: "validation",
+        throw createValidationError("Invalid to date: " + to, {
           field: "to",
-          value: to,
-          message: "Invalid to date: " + to
-        };
+          value: to
+        });
       }
     }
     if (Object.keys(query.createdAt).length === 0) {
@@ -147,23 +144,19 @@ function parseFilterQuery(req) {
   if (limit !== undefined) {
     parsedLimit = parseInt(limit, 10);
     if (Number.isNaN(parsedLimit) || parsedLimit < 0) {
-      throw {
-        type: "validation",
+      throw createValidationError("Invalid limit: " + limit, {
         field: "limit",
-        value: limit,
-        message: "Invalid limit: " + limit
-      };
+        value: limit
+      });
     }
   }
   if (offset !== undefined) {
     parsedOffset = parseInt(offset, 10);
     if (Number.isNaN(parsedOffset) || parsedOffset < 0) {
-      throw {
-        type: "validation",
+      throw createValidationError("Invalid offset: " + offset, {
         field: "offset",
-        value: offset,
-        message: "Invalid offset: " + offset
-      };
+        value: offset
+      });
     }
   }
 
@@ -171,359 +164,301 @@ function parseFilterQuery(req) {
 }
 
 async function createIncidentHandler(req, res) {
-  try {
-    const { title, description, service, severity } = req.body;
+  const { title, description, service, severity } = req.body;
 
-    if (!title || !description || !service) {
-      return res.status(400).json({
-        error: "title, description and service are required"
-      });
-    }
+  if (!title || !description || !service) {
+    throw createValidationError("title, description and service are required");
+  }
 
-    if (severity !== undefined && !isValidSeverity(severity)) {
-      return res.status(400).json({
-        error: "Invalid severity",
-        allowedValues: VALID_SEVERITIES
-      });
-    }
-
-    const incident = createIncident({
-      title,
-      description,
-      service,
-      severity
-    });
-
-    const db = getDatabase();
-
-    const result = await db.collection("incidents").insertOne(incident);
-
-    const persisted = {
-      ...incident,
-      _id: result.insertedId
-    };
-
-    notifyIncidentCreated(persisted);
-    recordIncidentCreatedAsync(persisted);
-
-    res.status(201).json({
-      id: result.insertedId,
-      ...incident
-    });
-  } catch (error) {
-    console.error("Create incident error:", error);
-
-    res.status(500).json({
-      error: "Failed to create incident"
+  if (severity !== undefined && !isValidSeverity(severity)) {
+    throw createValidationError("Invalid severity", {
+      field: "severity",
+      value: severity,
+      allowedValues: VALID_SEVERITIES
     });
   }
+
+  const incident = createIncident({
+    title,
+    description,
+    service,
+    severity
+  });
+
+  const db = getDatabase();
+
+  const result = await db.collection("incidents").insertOne(incident);
+
+  const persisted = {
+    ...incident,
+    _id: result.insertedId
+  };
+
+  notifyIncidentCreated(persisted);
+  recordIncidentCreatedAsync(persisted);
+
+  logger.info(
+    { incidentId: String(result.insertedId), severity: incident.severity, service: incident.service },
+    "Incident created"
+  );
+
+  res.status(201).json({
+    id: result.insertedId,
+    ...incident
+  });
 }
 
 async function getIncidentsHandler(req, res) {
-  try {
-    const { query, limit, offset } = parseFilterQuery(req);
+  const { query, limit, offset } = parseFilterQuery(req);
 
-    const db = getDatabase();
+  const db = getDatabase();
 
-    let cursor = db
-      .collection("incidents")
-      .find(query)
-      .sort({ createdAt: -1 });
+  let cursor = db
+    .collection("incidents")
+    .find(query)
+    .sort({ createdAt: -1 });
 
-    if (offset !== undefined) {
-      cursor = cursor.skip(offset);
-    }
-    if (limit !== undefined) {
-      cursor = cursor.limit(limit);
-    }
-
-    const incidents = await cursor.toArray();
-
-    res.json(incidents);
-  } catch (error) {
-    if (error && error.type === "validation") {
-      return res.status(400).json({
-        error: error.message,
-        field: error.field,
-        value: error.value,
-        allowedValues: error.allowed
-      });
-    }
-
-    console.error("Get incidents error:", error);
-
-    res.status(500).json({
-      error: "Failed to fetch incidents"
-    });
+  if (offset !== undefined) {
+    cursor = cursor.skip(offset);
   }
+  if (limit !== undefined) {
+    cursor = cursor.limit(limit);
+  }
+
+  const incidents = await cursor.toArray();
+
+  logger.debug(
+    { count: incidents.length, limit, offset, queryKeys: Object.keys(query) },
+    "Incidents listed"
+  );
+
+  res.json(incidents);
 }
 
 async function getIncidentStatsHandler(req, res) {
-  try {
-    const db = getDatabase();
+  const db = getDatabase();
 
-    const pipeline = [
-      {
-        $facet: {
-          total: [{ $count: "value" }],
-          byStatus: [
-            { $group: { _id: "$status", count: { $sum: 1 } } }
-          ],
-          bySeverity: [
-            { $group: { _id: "$severity", count: { $sum: 1 } } }
-          ],
-          byService: [
-            { $group: { _id: "$service", count: { $sum: 1 } } }
-          ],
-          openCritical: [
-            { $match: { status: "open", severity: "critical" } },
-            { $count: "value" }
-          ],
-          openHigh: [
-            { $match: { status: "open", severity: "high" } },
-            { $count: "value" }
-          ]
-        }
+  const pipeline = [
+    {
+      $facet: {
+        total: [{ $count: "value" }],
+        byStatus: [
+          { $group: { _id: "$status", count: { $sum: 1 } } }
+        ],
+        bySeverity: [
+          { $group: { _id: "$severity", count: { $sum: 1 } } }
+        ],
+        byService: [
+          { $group: { _id: "$service", count: { $sum: 1 } } }
+        ],
+        openCritical: [
+          { $match: { status: "open", severity: "critical" } },
+          { $count: "value" }
+        ],
+        openHigh: [
+          { $match: { status: "open", severity: "high" } },
+          { $count: "value" }
+        ]
       }
-    ];
-
-    const aggResult = await db
-      .collection("incidents")
-      .aggregate(pipeline)
-      .toArray();
-
-    const result = aggResult[0] || {};
-
-    const emptyStatusBucket = Object.fromEntries(
-      VALID_STATUSES.map((s) => [s, 0])
-    );
-    const emptySeverityBucket = Object.fromEntries(
-      VALID_SEVERITIES.map((s) => [s, 0])
-    );
-    const byStatus = { ...emptyStatusBucket };
-    const bySeverity = { ...emptySeverityBucket };
-    const byService = {};
-
-    for (const row of result.byStatus || []) {
-      byStatus[row._id] = row.count;
     }
-    for (const row of result.bySeverity || []) {
-      bySeverity[row._id] = row.count;
-    }
-    for (const row of result.byService || []) {
-      byService[row._id] = row.count;
-    }
+  ];
 
-    const total =
-      (result.total && result.total[0] && result.total[0].value) || 0;
-    const openCritical =
-      (result.openCritical &&
-        result.openCritical[0] &&
-        result.openCritical[0].value) ||
-      0;
-    const openHigh =
-      (result.openHigh && result.openHigh[0] && result.openHigh[0].value) || 0;
+  const aggResult = await db
+    .collection("incidents")
+    .aggregate(pipeline)
+    .toArray();
 
-    res.json({
-      total,
-      byStatus,
-      bySeverity,
-      byService,
-      openCritical,
-      openHigh
-    });
-  } catch (error) {
-    console.error("Get incident stats error:", error);
+  const result = aggResult[0] || {};
 
-    res.status(500).json({
-      error: "Failed to fetch incident statistics"
-    });
+  const emptyStatusBucket = Object.fromEntries(
+    VALID_STATUSES.map((s) => [s, 0])
+  );
+  const emptySeverityBucket = Object.fromEntries(
+    VALID_SEVERITIES.map((s) => [s, 0])
+  );
+  const byStatus = { ...emptyStatusBucket };
+  const bySeverity = { ...emptySeverityBucket };
+  const byService = {};
+
+  for (const row of result.byStatus || []) {
+    byStatus[row._id] = row.count;
   }
+  for (const row of result.bySeverity || []) {
+    bySeverity[row._id] = row.count;
+  }
+  for (const row of result.byService || []) {
+    byService[row._id] = row.count;
+  }
+
+  const total =
+    (result.total && result.total[0] && result.total[0].value) || 0;
+  const openCritical =
+    (result.openCritical &&
+      result.openCritical[0] &&
+      result.openCritical[0].value) ||
+    0;
+  const openHigh =
+    (result.openHigh && result.openHigh[0] && result.openHigh[0].value) || 0;
+
+  res.json({
+    total,
+    byStatus,
+    bySeverity,
+    byService,
+    openCritical,
+    openHigh
+  });
 }
 
 async function getIncidentHandler(req, res) {
-  try {
-    const { id } = req.params;
+  const { id } = req.params;
 
-    if (!isValidIncidentId(id)) {
-      return res.status(400).json({
-        error: "Invalid incident ID"
-      });
-    }
-
-    const db = getDatabase();
-
-    const incident = await db.collection("incidents").findOne({
-      _id: new ObjectId(id)
-    });
-
-    if (!incident) {
-      return res.status(404).json({
-        error: "Incident not found"
-      });
-    }
-
-    res.json(incident);
-  } catch (error) {
-    console.error("Get incident error:", error);
-
-    res.status(500).json({
-      error: "Failed to fetch incident"
-    });
+  if (!isValidIncidentId(id)) {
+    throw createValidationError("Invalid incident ID", { field: "id", value: id });
   }
+
+  const db = getDatabase();
+
+  const incident = await db.collection("incidents").findOne({
+    _id: new ObjectId(id)
+  });
+
+  if (!incident) {
+    throw createNotFoundError("Incident not found", { field: "id", value: id });
+  }
+
+  res.json(incident);
 }
 
 async function updateIncidentHandler(req, res) {
-  try {
-    const { id } = req.params;
-    const updates = req.body;
+  const { id } = req.params;
+  const updates = req.body;
 
-    if (!isValidIncidentId(id)) {
-      return res.status(400).json({
-        error: "Invalid incident ID"
-      });
-    }
+  if (!isValidIncidentId(id)) {
+    throw createValidationError("Invalid incident ID", { field: "id", value: id });
+  }
 
-    if (updates.status !== undefined && !isValidStatus(updates.status)) {
-      return res.status(400).json({
-        error: "Invalid status",
-        allowedValues: VALID_STATUSES
-      });
-    }
-
-    if (updates.severity !== undefined && !isValidSeverity(updates.severity)) {
-      return res.status(400).json({
-        error: "Invalid severity",
-        allowedValues: VALID_SEVERITIES
-      });
-    }
-
-    const db = getDatabase();
-
-    const existing = await db.collection("incidents").findOne({
-      _id: new ObjectId(id)
-    });
-
-    if (!existing) {
-      return res.status(404).json({
-        error: "Incident not found"
-      });
-    }
-
-    const previous = { ...existing };
-    const updated = updateIncident(existing, updates);
-
-    await db.collection("incidents").replaceOne(
-      { _id: new ObjectId(id) },
-      updated
-    );
-
-    notifyIncidentUpdated(updated, previous);
-
-    const changes = buildChanges(previous, updated);
-    recordIncidentUpdatedAsync(updated, previous, changes);
-
-    res.json(updated);
-  } catch (error) {
-    console.error("Update incident error:", error);
-
-    res.status(500).json({
-      error: "Failed to update incident"
+  if (updates.status !== undefined && !isValidStatus(updates.status)) {
+    throw createValidationError("Invalid status", {
+      field: "status",
+      value: updates.status,
+      allowedValues: VALID_STATUSES
     });
   }
+
+  if (updates.severity !== undefined && !isValidSeverity(updates.severity)) {
+    throw createValidationError("Invalid severity", {
+      field: "severity",
+      value: updates.severity,
+      allowedValues: VALID_SEVERITIES
+    });
+  }
+
+  const db = getDatabase();
+
+  const existing = await db.collection("incidents").findOne({
+    _id: new ObjectId(id)
+  });
+
+  if (!existing) {
+    throw createNotFoundError("Incident not found", { field: "id", value: id });
+  }
+
+  const previous = { ...existing };
+  const updated = updateIncident(existing, updates);
+
+  await db.collection("incidents").replaceOne(
+    { _id: new ObjectId(id) },
+    updated
+  );
+
+  notifyIncidentUpdated(updated, previous);
+
+  const changes = buildChanges(previous, updated);
+  recordIncidentUpdatedAsync(updated, previous, changes);
+
+  logger.info(
+    {
+      incidentId: id,
+      changedFields: Object.keys(changes),
+      prevStatus: previous.status,
+      newStatus: updated.status,
+      prevSeverity: previous.severity,
+      newSeverity: updated.severity
+    },
+    "Incident updated"
+  );
+
+  res.json(updated);
 }
 
 async function getIncidentHistoryHandler(req, res) {
-  try {
-    const { id } = req.params;
+  const { id } = req.params;
 
-    if (!isValidIncidentId(id)) {
-      return res.status(400).json({
-        error: "Invalid incident ID"
-      });
-    }
-
-    const db = getDatabase();
-    const incident = await db.collection("incidents").findOne({
-      _id: new ObjectId(id)
-    });
-
-    if (!incident) {
-      return res.status(404).json({
-        error: "Incident not found"
-      });
-    }
-
-    const { limit, offset } = req.query;
-    const options = {};
-    if (limit !== undefined) {
-      const parsedLimit = parseInt(limit, 10);
-      if (Number.isNaN(parsedLimit) || parsedLimit < 0) {
-        return res.status(400).json({
-          error: "Invalid limit: " + limit,
-          field: "limit",
-          value: limit
-        });
-      }
-      options.limit = parsedLimit;
-    }
-    if (offset !== undefined) {
-      const parsedOffset = parseInt(offset, 10);
-      if (Number.isNaN(parsedOffset) || parsedOffset < 0) {
-        return res.status(400).json({
-          error: "Invalid offset: " + offset,
-          field: "offset",
-          value: offset
-        });
-      }
-      options.offset = parsedOffset;
-    }
-
-    const history = await getIncidentHistory(id, options);
-
-    res.json(history);
-  } catch (error) {
-    console.error("Get incident history error:", error);
-
-    res.status(500).json({
-      error: "Failed to fetch incident history"
-    });
+  if (!isValidIncidentId(id)) {
+    throw createValidationError("Invalid incident ID", { field: "id", value: id });
   }
+
+  const db = getDatabase();
+  const incident = await db.collection("incidents").findOne({
+    _id: new ObjectId(id)
+  });
+
+  if (!incident) {
+    throw createNotFoundError("Incident not found", { field: "id", value: id });
+  }
+
+  const { limit, offset } = req.query;
+  const options = {};
+  if (limit !== undefined) {
+    const parsedLimit = parseInt(limit, 10);
+    if (Number.isNaN(parsedLimit) || parsedLimit < 0) {
+      throw createValidationError("Invalid limit: " + limit, {
+        field: "limit",
+        value: limit
+      });
+    }
+    options.limit = parsedLimit;
+  }
+  if (offset !== undefined) {
+    const parsedOffset = parseInt(offset, 10);
+    if (Number.isNaN(parsedOffset) || parsedOffset < 0) {
+      throw createValidationError("Invalid offset: " + offset, {
+        field: "offset",
+        value: offset
+      });
+    }
+    options.offset = parsedOffset;
+  }
+
+  const history = await getIncidentHistory(id, options);
+
+  res.json(history);
 }
 
 async function deleteIncidentHandler(req, res) {
-  try {
-    const { id } = req.params;
+  const { id } = req.params;
 
-    if (!isValidIncidentId(id)) {
-      return res.status(400).json({
-        error: "Invalid incident ID"
-      });
-    }
-
-    const db = getDatabase();
-
-    const result = await db.collection("incidents").deleteOne({
-      _id: new ObjectId(id)
-    });
-
-    if (result.deletedCount === 0) {
-      return res.status(404).json({
-        error: "Incident not found"
-      });
-    }
-
-    res.json({
-      message: "Incident deleted successfully",
-      id
-    });
-  } catch (error) {
-    console.error("Delete incident error:", error);
-
-    res.status(500).json({
-      error: "Failed to delete incident"
-    });
+  if (!isValidIncidentId(id)) {
+    throw createValidationError("Invalid incident ID", { field: "id", value: id });
   }
+
+  const db = getDatabase();
+
+  const result = await db.collection("incidents").deleteOne({
+    _id: new ObjectId(id)
+  });
+
+  if (result.deletedCount === 0) {
+    throw createNotFoundError("Incident not found", { field: "id", value: id });
+  }
+
+  logger.info({ incidentId: id }, "Incident deleted");
+
+  res.json({
+    message: "Incident deleted successfully",
+    id
+  });
 }
 
 module.exports = {

@@ -1,5 +1,6 @@
 const { ObjectId } = require("mongodb");
 const { getDatabase } = require("../config/database");
+const { logger } = require("../config/logger");
 const { createHistoryEntry, normalizeChanges } = require("../models/incidentHistory");
 
 const COLLECTION = "incidentHistory";
@@ -17,14 +18,15 @@ async function ensureIndexes() {
       { incidentId: 1, type: 1, timestamp: -1 },
       { name: "incidentId_type_timestamp_desc" }
     );
+    logger.info({ collection: COLLECTION, indexes: 2 }, "History indexes ensured");
   } catch (error) {
-    console.warn("[history] ensureIndexes failed (non-fatal):", error.message);
+    logger.warn({ collection: COLLECTION, err: error, message: error && error.message ? error.message : String(error) }, "[history] ensureIndexes failed (non-fatal)");
   }
 }
 
 function fireAndForget(promise, label) {
   Promise.resolve(promise).catch((error) => {
-    console.warn(`[history] ${label} fireAndForget error:`, error.message);
+    logger.warn({ label, err: error, message: error && error.message ? error.message : String(error) }, `[history] ${label} fireAndForget error`);
   });
 }
 
@@ -46,9 +48,11 @@ async function recordIncidentCreated(incident, actor) {
         service: incident.service
       }
     });
-    return await insertOne(entry);
+    const id = await insertOne(entry);
+    logger.debug({ historyId: id, incidentId: String(incident._id || incident.id), type: "created" }, "Recorded incident created history");
+    return id;
   } catch (error) {
-    console.warn("[history] recordIncidentCreated failed:", error.message);
+    logger.warn({ err: error, message: error && error.message ? error.message : String(error) }, "[history] recordIncidentCreated failed");
     throw error;
   }
 }
@@ -70,9 +74,11 @@ async function recordIncidentUpdated(incident, previous, changes, actor) {
       actor: actor || { type: "system", name: "incidentflow-api" },
       changes: normalizedChanges
     });
-    return await insertOne(entry);
+    const id = await insertOne(entry);
+    logger.debug({ historyId: id, incidentId: String(incident._id || incident.id), type: "updated", changedFields: normalizedChanges.map((c) => c.field) }, "Recorded incident updated history");
+    return id;
   } catch (error) {
-    console.warn("[history] recordIncidentUpdated failed:", error.message);
+    logger.warn({ err: error, message: error && error.message ? error.message : String(error) }, "[history] recordIncidentUpdated failed");
     throw error;
   }
 }
@@ -98,9 +104,11 @@ async function recordAutomationEvent(incidentId, eventType, details) {
         ...(details && typeof details === "object" ? details : { details })
       }
     });
-    return await insertOne(entry);
+    const id = await insertOne(entry);
+    logger.debug({ historyId: id, incidentId: String(incidentId), eventType }, "Recorded automation event");
+    return id;
   } catch (error) {
-    console.warn("[history] recordAutomationEvent failed:", error.message);
+    logger.warn({ err: error, message: error && error.message ? error.message : String(error) }, "[history] recordAutomationEvent failed");
     throw error;
   }
 }
